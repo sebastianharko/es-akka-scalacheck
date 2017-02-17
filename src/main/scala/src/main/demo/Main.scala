@@ -130,6 +130,10 @@ case class UserAccount(accountType: AccountType = Free,
 
       case PremiumAccountDisabled =>
         this.copy(accountType = Free)
+
+      case PremiumFeatureBeingUsed =>
+        this
+
     }
   }
 
@@ -172,6 +176,9 @@ case class UserAccount(accountType: AccountType = Free,
        List(UserLoggedOut)
       else
         List()
+
+    case ReActivateAccount(secretCode) if secretCode == "V6G1J1" =>
+      List(AccountReactivated)
   }
 
 }
