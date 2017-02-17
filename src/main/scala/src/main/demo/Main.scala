@@ -187,9 +187,9 @@ object Main extends App {
   actorRef ! Commands.LogIn("123")
   actorRef ! Commands.LogIn("password")
 
-  actorRef ! PoisonPill
-
   Thread.sleep(9000)
+
+  actorRef ! PoisonPill
 
   val newActorRef = system.actorOf(AkkaPersistenceActorForEntity.props("UserId-#1", initialState = account))
 
