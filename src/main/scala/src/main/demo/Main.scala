@@ -36,9 +36,9 @@ class AkkaPersistenceActorForEntity(entityId: String, initialState: EntityState)
 
 }
 
-trait Event
+sealed trait Event
 
-trait Command
+sealed trait Command
 
 trait EntityState {
 
