@@ -42,15 +42,15 @@ sealed trait Command
 
 trait EntityState {
 
-  def applyEvent(event: Event): EntityState
+  def applyEvent(event: Event): this.type
 
-  def applyEvents(events: List[Event]): EntityState  = {
+  def applyEvents(events: List[Event]): this.type = {
     events.foldLeft(this)((state, event) => state.applyEvent(event))
   }
 
   def applyCommand(command: Command): List[Event]
 
-  def applyCommands(commands: List[Command]): EntityState = {
+  def applyCommands(commands: List[Command]): this.type = {
     commands.foldLeft(this)((state: EntityState, command: Command) => state.applyEvents(applyCommand(command)))
   }
 
@@ -139,7 +139,7 @@ case class UserAccount(accountType: AccountType = Free,
 
   override def applyCommand(command: Command) = command match {
 
-    case EnablePremiumAccount =>
+    case EnablePremiumAccount if !suspended =>
       // normally, here we do some external API calls
       val validCreditCardPayment = true
       if (validCreditCardPayment)
@@ -147,20 +147,19 @@ case class UserAccount(accountType: AccountType = Free,
       else
         List()
 
-    case DisablePremiumAccount =>
-      if (accountType == Premium)
+    case DisablePremiumAccount if !suspended =>
+      if (accountType == Premium )
        List(PremiumAccountDisabled)
       else
         List()
 
-    case UsePremiumFeature =>
+    case UsePremiumFeature if !suspended && numActiveLogins > 0 =>
       if (accountType == Premium)
         List(PremiumFeatureBeingUsed)
       else
         List()
 
-    case LogIn(providedPassword) =>
-      if (!suspended) {
+    case LogIn(providedPassword) if !suspended =>
         if (providedPassword == password)
           List(UserLoggedIn)
         else
@@ -169,7 +168,7 @@ case class UserAccount(accountType: AccountType = Free,
             List.fill(numActiveLogins)(UserLoggedOut) :+ AccountSuspended
           else
             List(UserAuthFailed)
-      } else List()
+
 
     case LogOut =>
       if (numActiveLogins > 0)
@@ -177,8 +176,10 @@ case class UserAccount(accountType: AccountType = Free,
       else
         List()
 
-    case ReActivateAccount(secretCode) if secretCode == "V6G1J1" =>
+    case ReActivateAccount(secretCode) if suspended && secretCode == "V6G1J1" =>
       List(AccountReactivated)
+
+    case _ => List()
   }
 
 }
