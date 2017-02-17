@@ -1,6 +1,6 @@
 package src.main.demo
 
-import akka.actor.{ActorLogging, ActorSystem, Props}
+import akka.actor.{ActorLogging, ActorSystem, PoisonPill, Props}
 import akka.persistence.{PersistentActor, RecoveryCompleted}
 
 object AkkaPersistenceActorForEntity {
@@ -30,10 +30,10 @@ class AkkaPersistenceActorForEntity(entityId: String, initialState: EntityState)
         log.info("persisting event {}", e.toString)
         entityState = entityState.applyEvent(e)
       }
-    case 'Stop => context.stop(self)
-  case s: AnyRef => log.info(s.toString) case s: AnyRef => log.info(s.toString) case s: AnyRef => log.info(s.toString) case s: AnyRef => log.info(s.toString) case s: AnyRef => log.info(s.toString) case s: AnyRef => log.info(s.toString) case s: AnyRef => log.info(s.toString) }
+  }
 
   override def persistenceId: String = entityId
+
 }
 
 trait Event
@@ -136,7 +136,7 @@ case class UserAccount(accountType: AccountType = Free,
   override def applyCommand(command: Command) = command match {
 
     case EnablePremiumAccount =>
-
+      // normally, here we do some external API calls
       val validCreditCardPayment = true
       if (validCreditCardPayment)
         List(PremiumAccountEnabled)
@@ -187,7 +187,7 @@ object Main extends App {
   actorRef ! Commands.LogIn("123")
   actorRef ! Commands.LogIn("password")
 
-  actorRef ! 'Stop
+  actorRef ! PoisonPill
 
   Thread.sleep(9000)
 
