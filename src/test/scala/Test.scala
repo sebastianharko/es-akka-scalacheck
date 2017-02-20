@@ -18,7 +18,7 @@ class SimplePropertySpec extends PropSpec with PropertyChecks with Matchers {
 
   property("absolutely no way to login if the account is suspended - even if password is correct") {
     forAll(commandGen) { (commandList: List[Command]) =>
-      es.applyCommands(suspendedUser, commandList).suspended shouldBe false
+      es.applyCommands(suspendedUser, commandList).numActiveLogins shouldBe 0
     }
   }
 
