@@ -3,32 +3,134 @@ package src.main.demo
 import akka.actor.{ActorLogging, ActorSystem, PoisonPill, Props}
 import akka.persistence.{PersistentActor, RecoveryCompleted}
 
-object AkkaPersistenceActorForEntity {
+sealed trait EventSourceable[T] {
 
-  def props(entityId: String, initialState: EntityState): Props = {
-    Props(new AkkaPersistenceActorForEntity(entityId, initialState))
+  def applyEvent(t: T, e: Event): T
+
+  def applyCommand(t: T, c: Command): List[Event]
+
+  def applyEvents(t: T, events: List[Event]): T =
+    events.foldLeft(t)((state, event) => applyEvent(state, event))
+
+  def applyCommands(t: T, commands: List[Command]): T =
+    commands.foldLeft(t)((state: T, command: Command) => applyEvents(state, applyCommand(state, command)))
+
+}
+
+object EventSourceableEntities {
+
+  implicit object EsUserAccount extends EventSourceable[UserAccount] {
+
+    import Events._
+    import Commands._
+
+    def applyEvent(t: UserAccount, event: Event): UserAccount = {
+
+      event match {
+
+        case UserLoggedIn =>
+          t.copy(numActiveLogins = t.numActiveLogins + 1)
+
+        case UserLoggedOut =>
+          t.copy(numActiveLogins = t.numActiveLogins - 1)
+
+        case UserAuthFailed =>
+          t.copy(numFailedLoginsAttempts = t.numFailedLoginsAttempts + 1)
+
+        case AccountSuspended =>
+          t.copy(suspended = true)
+
+        case AccountReactivated =>
+          t.copy(suspended = false)
+
+        case PremiumAccountEnabled =>
+          t.copy(accountType = Premium)
+
+        case PremiumAccountDisabled =>
+          t.copy(accountType = Free)
+
+        case PremiumFeatureBeingUsed =>
+          t
+
+      }
+    }
+
+    override def applyCommand(t: UserAccount, command: Command) = command match {
+
+      case EnablePremiumAccount if !t.suspended =>
+        // normally, here we do some external API calls
+        val validCreditCardPayment = true
+        if (validCreditCardPayment)
+          List(PremiumAccountEnabled)
+        else
+          List()
+
+      case DisablePremiumAccount if !t.suspended =>
+        if (t.accountType == Premium)
+          List(PremiumAccountDisabled)
+        else
+          List()
+
+      case UsePremiumFeature if !t.suspended && t.numActiveLogins > 0 =>
+        if (t.accountType == Premium)
+          List(PremiumFeatureBeingUsed)
+        else
+          List()
+
+      case LogIn(providedPassword) if !t.suspended =>
+        if (providedPassword == t.password)
+          List(UserLoggedIn)
+        else if (t.numFailedLoginsAttempts == 3)
+        // cancel every active session
+          List.fill(t.numActiveLogins)(UserLoggedOut) :+ AccountSuspended
+        else
+          List(UserAuthFailed)
+
+
+      case LogOut =>
+        if (t.numActiveLogins > 0)
+          List(UserLoggedOut)
+        else
+          List()
+
+      case ReActivateAccount(secretCode) if t.suspended && secretCode == "V6G1J1" =>
+        List(AccountReactivated)
+
+      case _ => List()
+    }
+
   }
 
 }
 
-class AkkaPersistenceActorForEntity(entityId: String, initialState: EntityState) extends PersistentActor with ActorLogging {
 
-  var entityState: EntityState = initialState
+object AkkaPersistenceActorForEntity {
+
+  def props[T](entityId: String, initialEntityState: T)(implicit es:EventSourceable[T]): Props = {
+    Props(new AkkaPersistenceActorForEntity(entityId, initialEntityState))
+  }
+}
+
+
+
+class AkkaPersistenceActorForEntity[T](entityId: String, initialEntityState: T)(implicit es: EventSourceable[T]) extends PersistentActor with ActorLogging {
+
+  var entityState: T = initialEntityState
 
   override def receiveRecover: Receive = {
     case e: Event =>
       log.info("recovering event {}", e.toString)
-      entityState = entityState.applyEvent(e)
+      entityState = es.applyEvent(entityState, e)
     case RecoveryCompleted =>
       log.info("recovery completed!")
   }
 
   override def receiveCommand: Receive = {
     case c: Command =>
-      val events = initialState.applyCommand(c)
+      val events = es.applyCommand(entityState, c)
       persistAll(events) { (e: Event) =>
         log.info("persisting event {}", e.toString)
-        entityState = entityState.applyEvent(e)
+        entityState = es.applyEvent(entityState, e)
       }
   }
 
@@ -36,25 +138,9 @@ class AkkaPersistenceActorForEntity(entityId: String, initialState: EntityState)
 
 }
 
-sealed trait Event
-
 sealed trait Command
 
-trait EntityState {
-
-  def applyEvent(event: Event): this.type
-
-  def applyEvents(events: List[Event]): this.type = {
-    events.foldLeft(this)((state, event) => state.applyEvent(event))
-  }
-
-  def applyCommand(command: Command): List[Event]
-
-  def applyCommands(commands: List[Command]): this.type = {
-    commands.foldLeft(this)((state: EntityState, command: Command) => state.applyEvents(applyCommand(command)))
-  }
-
-}
+sealed trait Event
 
 object Commands {
 
@@ -102,87 +188,7 @@ case class UserAccount(accountType: AccountType = Free,
                        suspended: Boolean = false,
                        numActiveLogins: Int = 0,
                        numFailedLoginsAttempts: Int = 0
-                    ) extends EntityState {
-
-  import Events._
-  import Commands._
-  override def applyEvent(event: Event): EntityState = {
-
-    event match {
-
-      case UserLoggedIn =>
-        this.copy(numActiveLogins = numActiveLogins + 1)
-
-      case UserLoggedOut =>
-        this.copy(numActiveLogins = numActiveLogins - 1)
-
-      case UserAuthFailed =>
-        this.copy(numFailedLoginsAttempts = numFailedLoginsAttempts + 1)
-
-      case AccountSuspended =>
-        this.copy(suspended = true)
-
-      case AccountReactivated =>
-        this.copy(suspended = false)
-
-      case PremiumAccountEnabled =>
-        this.copy(accountType = Premium)
-
-      case PremiumAccountDisabled =>
-        this.copy(accountType = Free)
-
-      case PremiumFeatureBeingUsed =>
-        this
-
-    }
-  }
-
-  override def applyCommand(command: Command) = command match {
-
-    case EnablePremiumAccount if !suspended =>
-      // normally, here we do some external API calls
-      val validCreditCardPayment = true
-      if (validCreditCardPayment)
-        List(PremiumAccountEnabled)
-      else
-        List()
-
-    case DisablePremiumAccount if !suspended =>
-      if (accountType == Premium )
-       List(PremiumAccountDisabled)
-      else
-        List()
-
-    case UsePremiumFeature if !suspended && numActiveLogins > 0 =>
-      if (accountType == Premium)
-        List(PremiumFeatureBeingUsed)
-      else
-        List()
-
-    case LogIn(providedPassword) if !suspended =>
-        if (providedPassword == password)
-          List(UserLoggedIn)
-        else
-          if (numFailedLoginsAttempts == 3)
-            // cancel every active session
-            List.fill(numActiveLogins)(UserLoggedOut) :+ AccountSuspended
-          else
-            List(UserAuthFailed)
-
-
-    case LogOut =>
-      if (numActiveLogins > 0)
-       List(UserLoggedOut)
-      else
-        List()
-
-    case ReActivateAccount(secretCode) if suspended && secretCode == "V6G1J1" =>
-      List(AccountReactivated)
-
-    case _ => List()
-  }
-
-}
+                    )
 
 object Main extends App {
 
@@ -190,7 +196,8 @@ object Main extends App {
 
   val account = new UserAccount()
 
-  val actorRef = system.actorOf(AkkaPersistenceActorForEntity.props("UserId-#1", initialState = account))
+  import EventSourceableEntities.EsUserAccount
+  val actorRef = system.actorOf(AkkaPersistenceActorForEntity.props("UserId-#1", initialEntityState = account))
 
   actorRef ! Commands.LogIn("123")
   actorRef ! Commands.LogIn("password")
@@ -199,6 +206,6 @@ object Main extends App {
 
   actorRef ! PoisonPill
 
-  val newActorRef = system.actorOf(AkkaPersistenceActorForEntity.props("UserId-#1", initialState = account))
+  val newActorRef = system.actorOf(AkkaPersistenceActorForEntity.props("UserId-#1", initialEntityState = account))
 
 }
