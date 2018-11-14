@@ -4,54 +4,40 @@ import akka.actor.{ActorLogging, ActorSystem, PoisonPill, Props}
 import akka.persistence.{PersistentActor, RecoveryCompleted}
 import src.main.demo.ResponseDocument.NoResponseForSender
 
-sealed trait EventSourceable[T] {
+object Entities {
 
-  def applyEvent(t: T, e: Event): T
+  implicit val esUserAccount = new EventSourcingSupport[UserAccount] {
 
-  def applyCommand(t: T, c: Command): (ResponseDocument, List[Event])
-
-  def applyEvents(t: T, events: List[Event]): T =
-    events.foldLeft(t)((state, event) => applyEvent(state, event))
-
-  def applyCommands(t: T, commands: List[Command]): T =
-    commands.foldLeft(t)((state: T, command: Command) => applyEvents(state, applyCommand(state, command)._2))
-
-}
-
-object EventSourceableEntities {
-
-  implicit object EsUserAccount extends EventSourceable[UserAccount] {
-
-    import Events._
     import Commands._
+    import Events._
     import ResponseDocument.NoResponseForSender
 
     def applyEvent(t: UserAccount, event: Event): UserAccount = {
 
       event match {
 
-        case UserLoggedIn =>
+        case UserLoggedIn ⇒
           t.copy(numActiveLogins = t.numActiveLogins + 1)
 
-        case UserLoggedOut =>
+        case UserLoggedOut ⇒
           t.copy(numActiveLogins = t.numActiveLogins - 1)
 
-        case UserAuthFailed =>
+        case UserAuthFailed ⇒
           t.copy(numFailedLoginsAttempts = t.numFailedLoginsAttempts + 1)
 
-        case AccountSuspended =>
+        case AccountSuspended ⇒
           t.copy(suspended = true)
 
-        case AccountReactivated =>
+        case AccountReactivated ⇒
           t.copy(suspended = false)
 
-        case PremiumAccountEnabled =>
+        case PremiumAccountEnabled ⇒
           t.copy(accountType = Premium)
 
-        case PremiumAccountDisabled =>
+        case PremiumAccountDisabled ⇒
           t.copy(accountType = Free)
 
-        case PremiumFeatureBeingUsed =>
+        case PremiumFeatureBeingUsed ⇒
           t
 
       }
@@ -106,112 +92,45 @@ object EventSourceableEntities {
 }
 
 
-object AkkaPersistenceActorForEntity {
+class UserAccountActor extends PersistentActor with ActorLogging {
 
-  def props[T](entityId: String, initialEntityState: T)(implicit es:EventSourceable[T]): Props = {
-    Props(new AkkaPersistenceActorForEntity(entityId, initialEntityState))
-  }
-}
+  var userState = new UserAccount()
 
+  import EventSourcingSupport.ops._
+  import Entities._
 
-
-class AkkaPersistenceActorForEntity[T](entityId: String, initialEntityState: T)(implicit es: EventSourceable[T]) extends PersistentActor with ActorLogging {
-
-  var entityState: T = initialEntityState
-
-  override def receiveRecover: Receive = {
-    case e: Event =>
-      log.info("recovering event {}", e.toString)
-      entityState = es.applyEvent(entityState, e)
-    case RecoveryCompleted =>
-      log.info("recovery completed!")
-  }
+  override def persistenceId: String = "user-id"
 
   override def receiveCommand: Receive = {
-    case c: Command =>
-      val commandResult = es.applyCommand(entityState, c)
+    case c: Command ⇒
+      val commandResult = userState.applyCommand(c)
       val response = commandResult._1
       val events = commandResult._2
-      persistAll(events) { (e: Event) =>
+      persistAll(events) { (e: Event) ⇒
         log.info("persisting event {}", e.toString)
-        entityState = es.applyEvent(entityState, e)
+        userState = userState.applyEvent(e)
         if (response != NoResponseForSender) {
           sender ! response
         }
       }
   }
 
-  override def persistenceId: String = entityId
+  override def receiveRecover: Receive = {
+    case e: Event ⇒
+      log.info("recovering event {}", e.toString)
+      userState = userState.applyEvent(e)
+    case RecoveryCompleted ⇒
+      log.info("recovery completed!")
+  }
 
 }
 
-sealed trait ResponseDocument
-
-sealed trait Command
-
-sealed trait Event
-
-object ResponseDocument {
-
-  case object NoResponseForSender extends ResponseDocument
-
-}
-
-object Commands {
-
-  case object EnablePremiumAccount extends Command
-
-  case object DisablePremiumAccount extends Command
-
-  case class LogIn(password: String) extends Command
-
-  case object LogOut extends Command
-
-  case class ReActivateAccount(secretCode: String) extends Command
-
-  case object UsePremiumFeature extends Command
-
-}
-
-object Events {
-
-  case object PremiumAccountEnabled extends Event
-
-  case object PremiumAccountDisabled extends Event
-
-  case object PremiumFeatureBeingUsed extends Event
-
-  case object AccountSuspended extends Event
-
-  case object AccountReactivated extends Event
-
-  case object UserLoggedIn extends Event
-
-  case object UserLoggedOut extends Event
-
-  case object UserAuthFailed extends Event
-
-}
-
-
-sealed trait AccountType
-case object Free extends AccountType
-case object Premium extends AccountType
-
-case class UserAccount(accountType: AccountType = Free,
-                       password: String = "default",
-                       suspended: Boolean = false,
-                       numActiveLogins: Int = 0,
-                       numFailedLoginsAttempts: Int = 0)
 
 object Main extends App {
 
   implicit val system = ActorSystem("system")
 
-  val account = new UserAccount()
-
-  import EventSourceableEntities.EsUserAccount
-  val actorRef = system.actorOf(AkkaPersistenceActorForEntity.props("UserId-#1", initialEntityState = account))
+  val actorRef = system.actorOf(Props(new UserAccountActor()))
 
   actorRef ! Commands.LogIn("123")
   actorRef ! Commands.LogIn("password")
@@ -219,7 +138,5 @@ object Main extends App {
   Thread.sleep(9000)
 
   actorRef ! PoisonPill
-
-  val newActorRef = system.actorOf(AkkaPersistenceActorForEntity.props("UserId-#1", initialEntityState = account))
 
 }

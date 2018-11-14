@@ -1,12 +1,12 @@
+import org.scalacheck.Arbitrary.arbitrary
 import org.scalacheck.Gen
+import org.scalacheck.Gen._
 import org.scalatest.prop.PropertyChecks
 import org.scalatest.{Matchers, PropSpec}
 import src.main.demo.Commands._
-import src.main.demo.{Command, EventSourceableEntities, UserAccount}
-
-import org.scalacheck._
-import Gen._
-import Arbitrary.arbitrary
+import src.main.demo.Entities._
+import src.main.demo.EventSourcingSupport.ops._
+import src.main.demo.{Command, UserAccount}
 
 class SimplePropertySpec extends PropSpec with PropertyChecks with Matchers {
 
@@ -18,12 +18,12 @@ class SimplePropertySpec extends PropSpec with PropertyChecks with Matchers {
     Gen.nonEmptyListOf(Gen.oneOf(randomPassword, correctPassword))
   }
 
-  import EventSourceableEntities.{EsUserAccount ⇒ es}
+
 
   property("absolutely no way to login if the account is suspended - even if password is correct") {
     val suspendedUser = UserAccount(suspended = true)
     forAll(logInGen) { commandList: List[Command] ⇒
-      es.applyCommands(suspendedUser, commandList).numActiveLogins shouldBe 0
+      suspendedUser.applyCommands(commandList).numActiveLogins shouldBe 0
     }
   }
 
@@ -31,11 +31,11 @@ class SimplePropertySpec extends PropSpec with PropertyChecks with Matchers {
     val user = UserAccount(password = "summer200one", suspended = false)
 
     val logInCommandWithRandomPass = for {
-      v ← arbitrary[String]
+      v ← arbitrary[String] if v != "summer200one"
     } yield LogIn(v)
 
     forAll(logInCommandWithRandomPass) {
-      logIn ⇒ es.applyCommands(user, logIn :: Nil).numActiveLogins shouldBe 0
+      logIn ⇒ user.applyCommands(logIn :: Nil).numActiveLogins shouldBe 0
     }
   }
 

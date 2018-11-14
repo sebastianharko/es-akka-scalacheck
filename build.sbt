@@ -1,3 +1,7 @@
+addCompilerPlugin("org.scalamacros" % "paradise" % "2.1.0" cross CrossVersion.full)
+
+libraryDependencies += "com.github.mpilquist" %% "simulacrum" % "0.14.0"
+
 name := "Decouple"
 
 version := "1.0"
